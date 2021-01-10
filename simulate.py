@@ -413,7 +413,7 @@ if __name__ == "__main__":
 
         # Obtain next sampling point from the acquisition function (expected_improvement)
         X_next = propose_location(expected_improvement, X_sample, Y_sample, gpr, bounds_np)
-        next_params = {k:v for k, v in zip(bounds.keys(), X_next)}
+        next_params = {k:v for k, v in zip(bounds.keys(), X_next.flatten())}
 
         # Obtain next noisy sample from the objective function
         Y_next = simulate_MOT(next_params, initPositionsFiltered, initVelocitiesFiltered, tFinal)
@@ -422,7 +422,7 @@ if __name__ == "__main__":
             print (Y_next)
 
         # Add sample to previous samples
-        X_sample = np.vstack((X_sample, X_next))
+        X_sample = np.vstack((X_sample, X_next.T))
         Y_sample = np.vstack((Y_sample, Y_next))
 
 
