@@ -368,7 +368,7 @@ if __name__ == "__main__":
     ])
 
     # Number of iterations
-    n_iter = 1000
+    n_iter = 10000
 
     print ("Running optimization...\n")
     for i in tqdm(range(n_iter)):
@@ -386,4 +386,6 @@ if __name__ == "__main__":
         X_sample = np.vstack((X_sample, X_next))
         Y_sample = np.vstack((Y_sample, Y_next))
 
-    print (Y_sample)
+    np.save("parameters", X_sample)
+    np.save("capture_counts", Y_sample)
+    np.save("initial_conditions", np.hstack((initPositionsFiltered, initVelocitiesFiltered)))
