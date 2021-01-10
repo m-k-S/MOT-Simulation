@@ -215,27 +215,32 @@ def create_initial_conditions(jetParams, runs, preFilterMaxAxialSpeed, preFilter
 #                      #
 ########################
 
+# Create IVP
+def ivp(t, vec, sim_params):
+    x, y, z, vx, vy, vz = tuple(vec)
+    return [vx, vy, vz, axMOT(vx, x, y, z, sim_params), ayMOT(vy, x, y, z, sim_params), azMOT(vz, x, y, z, sim_params)]
+
+# Integrate the IVP using scipy
+# NOTE: For multiprocessing use
+def integrate(ivp, tFinal, sim_params, ICs):
+    return solve_ivp(ivp, (0, tFinal), ICs, args=(sim_params,), vectorized=True)
+
 # Optimization Objective
 def simulate_MOT(params, init_positions, init_velocities, tFinal, parallelize=True):
     init_conditions = np.hstack((init_positions, init_velocities))
     num_atoms = init_conditions.shape[0]
 
-    # Create IVP
-    def ivp(t, vec, sim_params=params):
-        x, y, z, vx, vy, vz = tuple(vec)
-        return [vx, vy, vz, axMOT(vx, x, y, z, sim_params), ayMOT(vy, x, y, z, sim_params), azMOT(vz, x, y, z, sim_params)]
-
     outputs = []
 
     if parallelize:
         p = mp.Pool(num_cpu)
-        func = partial(solve_ivp, ivp, (0, tFinal))
-        outputs = p.map(func, init_conditions)
+        outputs = p.map(partial(integrate, ivp, tFinal, params), init_conditions)
+        outputs = list(outputs)
         p.close()
         p.join()
     else:
         for idx in range(num_atoms):
-            output = solve_ivp(ivp, (0, tFinal), init_conditions[idx, :], vectorized=True)
+            output = solve_ivp(ivp, (0, tFinal), init_conditions[idx, :], args=(params,), vectorized=True)
             outputs.append(output)
 
     final = np.array([output.y[:, -1] for output in outputs])
@@ -349,7 +354,7 @@ if __name__ == "__main__":
 
     # Initialize samples
     print ("Seeding optimization data from parameter bounds...\n")
-    initial_data = initialize_parameters(bounds, simulate_MOT, initPositionsFiltered, initVelocitiesFiltered, tFinal)
+    initial_data = initialize_parameters(bounds, initPositionsFiltered, initVelocitiesFiltered, tFinal)
 
     X_sample = np.array([
         [v for v in p[0].values()] for p in initial_data
