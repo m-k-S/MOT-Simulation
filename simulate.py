@@ -48,22 +48,6 @@ pushbeamMaxZ = 0.1
 targetZoneSize = 2 * 10**-3
 maxSpeed = 10
 
-# Example free parameters (unused!)
-example_params = {
-    's0': 2.,
-    's03D': 2.,
-    's0push': 0.01,
-    'Delta2D': -1.5,
-    'Delta3D': -2.5,
-    'DeltaPush': -0.9,
-    'Bgrad2D': 130. * 10**2,
-    'Bgrad3D': 50. * 10**2,
-    'wtransverse2D': 4. * 10**-3,
-    'wlongitude2D': 10. * 10**-3,
-    'w3D': 0.01,
-    'wPush': 3. * 10**-3
-}
-
 ###############################
 #                             #
 #   MOT Equations of Motion   #
@@ -301,7 +285,7 @@ def propose_location(acquisition, X_sample, Y_sample, gpr, bounds, n_restarts=25
 
     return min_x.reshape(-1, 1)
 
-def initialize_parameters(bounds, init_positions, init_velocities, tFinal):
+def initialize_parameters_at_bounds(bounds, init_positions, init_velocities, tFinal):
     dim = len(list(bounds.keys()))
     initial_params = [{k:0 for k in bounds.keys()} for _ in range(2**dim)]
     idx = 0
@@ -319,6 +303,55 @@ def initialize_parameters(bounds, init_positions, init_velocities, tFinal):
         io_pairs.append([params, captured_atoms])
 
     return io_pairs
+
+def get_precision(num):
+    digits = 0
+    if "." in str(num):
+        if int(str(num)[-1]) > 0:
+            digits = str(num)[::-1].find('.') * -1 - 1
+        elif str(num)[-1] == '0':
+            digits = len(str(num).split(".")[0]) - len(str(num).split(".")[0].rstrip('0'))
+    elif "e" in str(num):
+        if str(num).split("e")[1][0] == "+":
+            digits = int(str(num).split("e")[1].split("+")[-1])
+        elif str(num).split("e")[1][0] == "-":
+            digits = int(str(num).split("e")[1].split("-")[-1]) * -1
+    return digits
+
+
+def initialize_parameters(init_positions, init_velocities, tFinal, n_seeds=20):
+    example_params = {
+        's0': 2.,
+        's03D': 2.,
+        's0push': 0.01,
+        'Delta2D': -1.5,
+        'Delta3D': -2.5,
+        'DeltaPush': -0.9,
+        'Bgrad2D': 130. * 10**2,
+        'Bgrad3D': 50. * 10**2,
+        'wtransverse2D': 4. * 10**-3,
+        'wlongitude2D': 10. * 10**-3,
+        'w3D': 0.01,
+        'wPush': 3. * 10**-3
+    }
+
+    dim = len(list(example_params.keys()))
+    initial_params = [example_params]
+
+    for idx in range(n_seeds):
+        seed_params = {}
+        for key, val in example_params.items():
+            stddev = get_precision(val)
+            seed_params[key] = val + np.random.normal(val, 10**stddev)
+        initial_params.append(seed_params)
+
+    io_pairs = []
+    for params in tqdm(initial_params):
+        captured_atoms = simulate_MOT(params, init_positions, init_velocities, tFinal) # returns number of captured atomss
+        io_pairs.append([params, captured_atoms])
+
+    return io_pairs
+
 
 if __name__ == "__main__":
     # Parameters for initial conditions generation
@@ -354,7 +387,7 @@ if __name__ == "__main__":
 
     # Initialize samples
     print ("Seeding optimization data from parameter bounds...\n")
-    initial_data = initialize_parameters(bounds, initPositionsFiltered, initVelocitiesFiltered, tFinal)
+    initial_data = initialize_parameters(initPositionsFiltered, initVelocitiesFiltered, tFinal)
 
     X_sample = np.array([
         [v for v in p[0].values()] for p in initial_data
@@ -369,7 +402,6 @@ if __name__ == "__main__":
 
     np.save("seed_parameters", X_sample)
     np.save("seed_capture_counts", Y_sample)
-
 
     # Number of iterations
     n_iter = 10000
