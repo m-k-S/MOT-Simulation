@@ -367,6 +367,10 @@ if __name__ == "__main__":
         b for b in bounds.values()
     ])
 
+    np.save("seed_parameters", X_sample)
+    np.save("seed_capture_counts", Y_sample)
+
+
     # Number of iterations
     n_iter = 10000
 
