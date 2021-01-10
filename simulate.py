@@ -364,7 +364,7 @@ if __name__ == "__main__":
     ])
 
     bounds_np = np.array([
-        b for b in self.bounds.values()
+        b for b in bounds.values()
     ])
 
     # Number of iterations
