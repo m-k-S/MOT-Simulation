@@ -9,7 +9,12 @@ from scipy.stats import norm
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import ConstantKernel, Matern
 
-# Plotting
+# Multiprocessing
+import multiprocessing as mp
+from functools import partial
+num_cpu = mp.cpu_count()
+
+# Tracking
 from tqdm import tqdm
 
 #########################
@@ -168,44 +173,41 @@ jetParams = {
     'fullacceptanceAngle': 40.
 }
 
-runs = 2000000
-tFinal = 0.05
-preFilterMaxAxialSpeed = 30.
-preFilterMaxTranverseSpeed = 100.
+def create_initial_conditions(jetParams, runs, preFilterMaxAxialSpeed, preFilterMaxTranverseSpeed):
+    # Jet Initialization
+    initialPositions = np.vstack((
+        np.random.normal(jetParams['Mux'], jetParams['Sigmax'], runs),
+        np.random.normal(jetParams['Muy'], jetParams['Sigmay'], runs),
+        np.random.normal(jetParams['Muz'], jetParams['Sigmaz'], runs)
+    )).T
 
-# Jet Initialization
-initialPositions = np.vstack((
-    np.random.normal(jetParams['Mux'], jetParams['Sigmax'], runs),
-    np.random.normal(jetParams['Muy'], jetParams['Sigmay'], runs),
-    np.random.normal(jetParams['Muz'], jetParams['Sigmaz'], runs)
-)).T
+    initialVelocities = np.vstack((
+        np.random.normal(0, jetParams['Sigmav'], runs),
+        np.random.normal(0, jetParams['Sigmav'], runs),
+        np.random.normal(0, jetParams['Sigmav'], runs)
+    )).T
 
-initialVelocities = np.vstack((
-    np.random.normal(0, jetParams['Sigmav'], runs),
-    np.random.normal(0, jetParams['Sigmav'], runs),
-    np.random.normal(0, jetParams['Sigmav'], runs)
-)).T
+    initPositionsFiltered = []
+    initVelocitiesFiltered = []
 
-initPositionsFiltered = []
-initVelocitiesFiltered = []
+    print ("Initializing atom positions and velocities...\n")
+    for idx in tqdm(range(runs)):
+        angle_cutoff = jetParams['fullacceptanceAngle']
+        if initialVelocities[idx, 1] > 0 \
+        and (np.pi / 180) * (45 - angle_cutoff / 2) <= np.arctan(initialVelocities[idx, 1] / initialVelocities[idx, 0]) \
+        and np.arctan(initialVelocities[idx, 1] / initialVelocities[idx, 0]) <= (np.pi / 180) * (45 + angle_cutoff / 2) \
+        and np.abs(initialVelocities[idx, 2]) <= preFilterMaxAxialSpeed \
+        and np.sqrt(initialVelocities[idx, 0]**2 + initialVelocities[idx, 1]**2) <= preFilterMaxTranverseSpeed:
+            initPositionsFiltered.append(initialPositions[idx, :])
+            initVelocitiesFiltered.append(initialVelocities[idx, :])
 
-print ("Initializing atom positions and velocities...\n")
-for idx in tqdm(range(runs)):
-    angle_cutoff = jetParams['fullacceptanceAngle']
-    if initialVelocities[idx, 1] > 0 \
-    and (np.pi / 180) * (45 - angle_cutoff / 2) <= np.arctan(initialVelocities[idx, 1] / initialVelocities[idx, 0]) \
-    and np.arctan(initialVelocities[idx, 1] / initialVelocities[idx, 0]) <= (np.pi / 180) * (45 + angle_cutoff / 2) \
-    and np.abs(initialVelocities[idx, 2]) <= preFilterMaxAxialSpeed \
-    and np.sqrt(initialVelocities[idx, 0]**2 + initialVelocities[idx, 1]**2) <= preFilterMaxTranverseSpeed:
-        initPositionsFiltered.append(initialPositions[idx, :])
-        initVelocitiesFiltered.append(initialVelocities[idx, :])
+    initPositionsFiltered = np.asarray(initPositionsFiltered)
+    initVelocitiesFiltered =  np.asarray(initVelocitiesFiltered)
 
-initPositionsFiltered = np.asarray(initPositionsFiltered)
-initVelocitiesFiltered =  np.asarray(initVelocitiesFiltered)
-
-assert (len(initPositionsFiltered) == len(initVelocitiesFiltered))
-num_atoms = len(initPositionsFiltered)
-print ("Number of atoms: {}\n".format(num_atoms))
+    assert (len(initPositionsFiltered) == len(initVelocitiesFiltered))
+    num_atoms = len(initPositionsFiltered)
+    print ("Number of atoms: {}\n".format(num_atoms))
+    return initPositionsFiltered, initVelocitiesFiltered
 
 ########################
 #                      #
@@ -214,7 +216,7 @@ print ("Number of atoms: {}\n".format(num_atoms))
 ########################
 
 # Optimization Objective
-def simulate_MOT(params, init_positions=initPositionsFiltered, init_velocities=initVelocitiesFiltered):
+def simulate_MOT(params, init_positions, init_velocities, tFinal, parallelize=True):
     init_conditions = np.hstack((init_positions, init_velocities))
     num_atoms = init_conditions.shape[0]
 
@@ -224,9 +226,17 @@ def simulate_MOT(params, init_positions=initPositionsFiltered, init_velocities=i
         return [vx, vy, vz, axMOT(vx, x, y, z, sim_params), ayMOT(vy, x, y, z, sim_params), azMOT(vz, x, y, z, sim_params)]
 
     outputs = []
-    for idx in range(num_atoms):
-        output = solve_ivp(ivp, (0, 0.05), init_conditions[idx, :], vectorized=True)
-        outputs.append(output)
+
+    if parallelize:
+        p = mp.Pool(num_cpu)
+        func = partial(solve_ivp, ivp, (0, tFinal))
+        outputs = p.map(func, init_conditions)
+        p.close()
+        p.join()
+    else:
+        for idx in range(num_atoms):
+            output = solve_ivp(ivp, (0, tFinal), init_conditions[idx, :], vectorized=True)
+            outputs.append(output)
 
     final = np.array([output.y[:, -1] for output in outputs])
 
@@ -286,7 +296,7 @@ def propose_location(acquisition, X_sample, Y_sample, gpr, bounds, n_restarts=25
 
     return min_x.reshape(-1, 1)
 
-def initialize_parameters(bounds, fn):
+def initialize_parameters(bounds, init_positions, init_velocities, tFinal):
     dim = len(list(bounds.keys()))
     initial_params = [{k:0 for k in bounds.keys()} for _ in range(2**dim)]
     idx = 0
@@ -300,62 +310,75 @@ def initialize_parameters(bounds, fn):
 
     io_pairs = []
     for params in tqdm(initial_params):
-        captured_atoms = fn(params) # fn is the end2end simulation function; returns number of captured atomss
+        captured_atoms = simulate_MOT(params, init_positions, init_velocities, tFinal) # returns number of captured atomss
         io_pairs.append([params, captured_atoms])
 
     return io_pairs
 
-m52 = ConstantKernel(1.0) * Matern(length_scale=1.0, nu=2.5)
-gpr = GaussianProcessRegressor(kernel=m52, alpha=0.04)
+if __name__ == "__main__":
+    # Parameters for initial conditions generation
+    runs = 2000000
+    preFilterMaxAxialSpeed = 30.
+    preFilterMaxTranverseSpeed = 100.
 
-# Bounds on free parameters
-bounds = {
-    's0': [0.1, 3],
-    's0push': [0, 20],
-    's03D': [0.1, 3],
-    'Delta2D': [-5, 1],
-    'Delta3D': [-5, 1],
-    'DeltaPush': [-5, 1],
-    'Bgrad2D': [0, 300],
-    'Bgrad3D': [0, 300],
-    'wtransverse2D': [0.002, 0.005],
-    'wlongitude2D': [0.002, 0.010],
-    'w3D': [0.002, 0.008],
-    'wPush': [0.0005, 0.002]
-}
+    # Create initial conditions
+    initPositionsFiltered, initVelocitiesFiltered = create_initial_conditions(jetParams, runs, preFilterMaxAxialSpeed, preFilterMaxTranverseSpeed)
 
-# Initialize samples
-print ("Seeding optimization data from parameter bounds...\n")
-initial_data = initialize_parameters(bounds, simulate_MOT)
+    tFinal = 0.05      # Final time for diff. eq. solving
+    print ("Number of CPUs to be used: {}".format(num_cpu))
 
-X_sample = np.array([
-    [v for v in p[0].values()] for p in initial_data
-])
-Y_sample = np.array([
-    p[1] for p in initial_data
-])
+    # Set up Gaussian surrogate
+    m52 = ConstantKernel(1.0) * Matern(length_scale=1.0, nu=2.5)
+    gpr = GaussianProcessRegressor(kernel=m52, alpha=0.04)
 
-bounds_np = np.array([
-    b for b in self.bounds.values()
-])
+    # Bounds on free parameters
+    bounds = {
+        's0': [0.1, 3],
+        's0push': [0, 20],
+        's03D': [0.1, 3],
+        'Delta2D': [-5, 1],
+        'Delta3D': [-5, 1],
+        'DeltaPush': [-5, 1],
+        'Bgrad2D': [0, 300],
+        'Bgrad3D': [0, 300],
+        'wtransverse2D': [0.002, 0.005],
+        'wlongitude2D': [0.002, 0.010],
+        'w3D': [0.002, 0.008],
+        'wPush': [0.0005, 0.002]
+    }
 
-# Number of iterations
-n_iter = 1000
+    # Initialize samples
+    print ("Seeding optimization data from parameter bounds...\n")
+    initial_data = initialize_parameters(bounds, simulate_MOT, initPositionsFiltered, initVelocitiesFiltered, tFinal)
 
-print ("Running optimization...\n")
-for i in tqdm(range(n_iter)):
-    # Update Gaussian process with existing samples
-    gpr.fit(X_sample, Y_sample)
+    X_sample = np.array([
+        [v for v in p[0].values()] for p in initial_data
+    ])
+    Y_sample = np.array([
+        p[1] for p in initial_data
+    ])
 
-    # Obtain next sampling point from the acquisition function (expected_improvement)
-    X_next = propose_location(expected_improvement, X_sample, Y_sample, gpr, bounds_np)
-    next_params = {k:v for k, v in zip(bounds.keys(), X_next)}
+    bounds_np = np.array([
+        b for b in self.bounds.values()
+    ])
 
-    # Obtain next noisy sample from the objective function
-    Y_next = simulate_MOT(next_params)
+    # Number of iterations
+    n_iter = 1000
 
-    # Add sample to previous samples
-    X_sample = np.vstack((X_sample, X_next))
-    Y_sample = np.vstack((Y_sample, Y_next))
+    print ("Running optimization...\n")
+    for i in tqdm(range(n_iter)):
+        # Update Gaussian process with existing samples
+        gpr.fit(X_sample, Y_sample)
 
-print (Y_sample)
+        # Obtain next sampling point from the acquisition function (expected_improvement)
+        X_next = propose_location(expected_improvement, X_sample, Y_sample, gpr, bounds_np)
+        next_params = {k:v for k, v in zip(bounds.keys(), X_next)}
+
+        # Obtain next noisy sample from the objective function
+        Y_next = simulate_MOT(next_params, initPositionsFiltered, initVelocitiesFiltered, tFinal)
+
+        # Add sample to previous samples
+        X_sample = np.vstack((X_sample, X_next))
+        Y_sample = np.vstack((Y_sample, Y_next))
+
+    print (Y_sample)
