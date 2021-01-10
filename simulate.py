@@ -265,7 +265,7 @@ def expected_improvement(X, X_sample, Y_sample, gpr, xi=0.01):
         ei = imp * norm.cdf(Z) + sigma * norm.pdf(Z)
         ei[sigma == 0.0] = 0.0
 
-    return ei
+    return ei[0]
 
 def propose_location(acquisition, X_sample, Y_sample, gpr, bounds, n_restarts=25):
     dim = X_sample.shape[1]
@@ -387,7 +387,7 @@ if __name__ == "__main__":
 
     # Initialize samples
     print ("Seeding optimization data from parameter bounds...\n")
-    initial_data = initialize_parameters(initPositionsFiltered, initVelocitiesFiltered, tFinal)
+    initial_data = initialize_parameters(initPositionsFiltered, initVelocitiesFiltered, tFinal, 0)
 
     X_sample = np.array([
         [v for v in p[0].values()] for p in initial_data
@@ -418,9 +418,13 @@ if __name__ == "__main__":
         # Obtain next noisy sample from the objective function
         Y_next = simulate_MOT(next_params, initPositionsFiltered, initVelocitiesFiltered, tFinal)
 
+        if i % 100 == 0:
+            print (Y_next)
+
         # Add sample to previous samples
         X_sample = np.vstack((X_sample, X_next))
         Y_sample = np.vstack((Y_sample, Y_next))
+
 
     np.save("parameters", X_sample)
     np.save("capture_counts", Y_sample)
