@@ -257,7 +257,7 @@ def expected_improvement(X, X_sample, Y_sample, gpr, xi=0.01):
     # Needed for noise-based model,
     # otherwise use np.max(Y_sample).
     # See also section 2.4 in [...]
-    mu_sample_opt = np.max(mu_sample)
+    mu_sample_opt = np.max(Y_sample)
 
     with np.errstate(divide='warn'):
         imp = mu - mu_sample_opt - xi
@@ -404,7 +404,8 @@ if __name__ == "__main__":
     np.save("seed_capture_counts", Y_sample)
 
     # Number of iterations
-    n_iter = 10000
+    n_iter = 1000
+    best_Y = 0
 
     print ("Running optimization...\n")
     for i in tqdm(range(n_iter)):
@@ -418,8 +419,11 @@ if __name__ == "__main__":
         # Obtain next noisy sample from the objective function
         Y_next = simulate_MOT(next_params, initPositionsFiltered, initVelocitiesFiltered, tFinal)
 
+        if Y_next > best_Y:
+            best_Y = Y_next
+
         if i % 100 == 0:
-            print (Y_next)
+            print (best_Y)
 
         # Add sample to previous samples
         X_sample = np.vstack((X_sample, X_next.T))
