@@ -26,7 +26,7 @@ from tqdm import tqdm
 # Physical Constants
 hbar = constants.hbar
 kB = constants.Boltzmann
-muB = constants.value('proton mag. mom.') / constants.value('proton mag. mom. to Bohr magneton ratio')
+muB = constants.value('Bohr magneton')
 Da = constants.value('atomic mass constant')
 
 # Strontium 88 parameters
@@ -128,7 +128,7 @@ def ayMOT(v, x, y, z, sim_params):
     Delta2D = sim_params['Delta2D']
     Delta3D = sim_params['Delta3D']
     return ay2DMOT(Delta2D, v, x, y, z, sim_params) \
-            + ay3DMOT(Delta3D, v, x - MOT3dXoffset, y - MOT3dYoffset, z - MOT3dZoffset - g, sim_params)
+            + ay3DMOT(Delta3D, v, x - MOT3dXoffset, y - MOT3dYoffset, z - MOT3dZoffset, sim_params) - g
 
 def azMOT(v, x, y, z, sim_params):
     Delta2D = sim_params['Delta2D']
@@ -254,10 +254,7 @@ def expected_improvement(X, X_sample, Y_sample, gpr, xi=0.01):
 
     sigma = sigma.reshape(-1, 1)
 
-    # Needed for noise-based model,
-    # otherwise use np.max(Y_sample).
-    # See also section 2.4 in [...]
-    mu_sample_opt = np.max(Y_sample)
+    mu_sample_opt = np.max(mu_sample)
 
     with np.errstate(divide='warn'):
         imp = mu - mu_sample_opt - xi
